@@ -16,9 +16,11 @@ type Indexer interface {
 type IndexType = int8
 
 const (
+	// Btree 索引
 	Btree IndexType = iota + 1
 )
 
+// NewIndexer 根据 indexType 初始化索引
 func NewIndexer(typ IndexType) Indexer {
 	switch typ {
 	case Btree:
