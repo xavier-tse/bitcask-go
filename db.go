@@ -1,6 +1,12 @@
 package bitcask_go
 
 import (
+	"errors"
+	"io"
+	"os"
+	"sort"
+	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/xavier-tse/bitcask-go/data"
@@ -9,10 +15,40 @@ import (
 
 type DB struct {
 	options    Options
-	mu         sync.RWMutex
+	mu         *sync.RWMutex
+	fileIds    []int // 文件id, 仅用于加载索引
 	activeFile *data.DataFile
 	olderFiles map[uint32]*data.DataFile
 	index      index.Indexer
+}
+
+func Open(options Options) (*DB, error) {
+	if err := checkOptions(options); err != nil {
+		return nil, err
+	}
+
+	if _, err := os.Stat(options.DirPath); os.IsNotExist(err) {
+		if err := os.MkdirAll(options.DirPath, os.ModePerm); err != nil {
+			return nil, err
+		}
+	}
+
+	db := &DB{
+		options:    options,
+		mu:         new(sync.RWMutex),
+		olderFiles: make(map[uint32]*data.DataFile),
+		index:      index.NewIndexer(index.IndexType(options.IndexType)),
+	}
+
+	if err := db.loadDataFiles(); err != nil {
+		return nil, err
+	}
+
+	if err := db.loadIndexFromDataFiles(); err != nil {
+		return nil, err
+	}
+
+	return db, nil
 }
 
 func (db *DB) Put(key []byte, value []byte) error {
@@ -59,7 +95,7 @@ func (db *DB) Get(key []byte) ([]byte, error) {
 		return nil, ErrDataFileNotFound
 	}
 
-	logRecord, err := dataFile.ReadLogRecord(logRecordPos.Offset)
+	logRecord, _, err := dataFile.ReadLogRecord(logRecordPos.Offset)
 	if err != nil {
 		return nil, err
 	}
@@ -122,5 +158,94 @@ func (db *DB) setActiveDataFile() error {
 		return err
 	}
 	db.activeFile = dataFile
+	return nil
+}
+
+func checkOptions(options Options) error {
+	if options.DirPath == "" {
+		return errors.New("database dir is empty")
+	}
+	if options.DataFileSize <= 0 {
+		return errors.New("database data file size must be positive")
+	}
+	return nil
+}
+
+func (db *DB) loadDataFiles() error {
+	dirEntries, err := os.ReadDir(db.options.DirPath)
+	if err != nil {
+		return err
+	}
+
+	var fileIds []int
+	for _, entry := range dirEntries {
+		if strings.HasSuffix(entry.Name(), data.DataFileNameSuffix) {
+			splitNames := strings.Split(entry.Name(), ".")
+			fileId, err := strconv.Atoi(splitNames[0])
+			if err != nil {
+				return ErrDataDirectoryCorrupted
+			}
+			fileIds = append(fileIds, fileId)
+		}
+	}
+	sort.Ints(fileIds)
+	db.fileIds = fileIds
+
+	for i, fileId := range fileIds {
+		dataFile, err := data.OpenDataFile(db.options.DirPath, uint32(fileId))
+		if err != nil {
+			return err
+		}
+
+		if i == len(fileIds)-1 {
+			db.activeFile = dataFile
+		} else {
+			db.olderFiles[uint32(fileId)] = dataFile
+		}
+	}
+	return nil
+}
+
+func (db *DB) loadIndexFromDataFiles() error {
+	if len(db.fileIds) == 0 {
+		return nil
+	}
+
+	for i, fid := range db.fileIds {
+		var fileId = uint32(fid)
+		var dataFile *data.DataFile
+		if fileId == db.activeFile.FileId {
+			dataFile = db.activeFile
+		} else {
+			dataFile = db.olderFiles[fileId]
+		}
+
+		var offset int64 = 0
+		for {
+			logRecord, size, err := dataFile.ReadLogRecord(offset)
+			if err != nil {
+				if err == io.EOF {
+					break
+				}
+				return err
+			}
+
+			logRecordPos := &data.LogRecordPos{
+				Fid:    fileId,
+				Offset: offset,
+			}
+			if logRecord.Type == data.LogRecordDeleted {
+				db.index.Delete(logRecord.Key)
+			} else {
+				db.index.Put(logRecord.Key, logRecordPos)
+			}
+
+			offset += size
+		}
+
+		if i == len(db.fileIds)-1 {
+			db.activeFile.WriteOff = offset
+		}
+	}
 	return nil
 }
