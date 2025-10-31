@@ -1,5 +1,7 @@
 package data
 
+import "encoding/binary"
+
 type LogRecordType byte
 
 const (
@@ -7,10 +9,23 @@ const (
 	LogRecordDeleted
 )
 
+// crc type keySize valueSize
+//
+//	4 + 1 +   5   +   5 = 15
+const maxLogRecordHeaderSize = binary.MaxVarintLen32*2 + 5
+
 type LogRecord struct {
 	Key   []byte
 	Value []byte
 	Type  LogRecordType
+}
+
+// LogRecord 的头部信息
+type logRecordHeader struct {
+	crc        uint32
+	recordType LogRecordType
+	keySize    uint32
+	valueSize  uint32
 }
 
 type LogRecordPos struct {
@@ -20,4 +35,13 @@ type LogRecordPos struct {
 
 func EncodeLogRecord(logRecord *LogRecord) ([]byte, int64) {
 	return nil, 0
+}
+
+// decodeLogRecord 对字节数组中的 Header 信息解码
+func decodeLogRecord(buf []byte) (*logRecordHeader, int64) {
+	return nil, 0
+}
+
+func getLogRecordCRC(lr *LogRecord, header []byte) uint32 {
+	return 0
 }
