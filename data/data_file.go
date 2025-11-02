@@ -55,7 +55,7 @@ func (df *DataFile) ReadLogRecord(offset int64) (*LogRecord, int64, error) {
 		return nil, 0, err
 	}
 
-	header, headerSize := decodeLogRecord(headerBuf)
+	header, headerSize := decodeLogRecordHeader(headerBuf)
 	// 读取到文件末尾，直接返回 io.EOF
 	if header == nil {
 		return nil, 0, io.EOF
@@ -71,7 +71,7 @@ func (df *DataFile) ReadLogRecord(offset int64) (*LogRecord, int64, error) {
 		Type: header.recordType,
 	}
 	// 读取实际存储的 kv 数据
-	if keySize > 0 && valueSize > 0 {
+	if keySize > 0 || valueSize > 0 {
 		kvBuf, err := df.readNBytes(keySize+valueSize, offset+headerSize)
 		if err != nil {
 			return nil, 0, err

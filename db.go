@@ -38,7 +38,7 @@ func Open(options Options) (*DB, error) {
 		options:    options,
 		mu:         new(sync.RWMutex),
 		olderFiles: make(map[uint32]*data.DataFile),
-		index:      index.NewIndexer(index.IndexType(options.IndexType)),
+		index:      index.NewIndexer(options.IndexType),
 	}
 
 	// 加载数据文件
@@ -86,7 +86,7 @@ func (db *DB) Delete(key []byte) error {
 	}
 
 	// key 不存在，直接返回
-	if pos := db.index.Get(key); pos != nil {
+	if pos := db.index.Get(key); pos == nil {
 		return nil
 	}
 
@@ -136,7 +136,7 @@ func (db *DB) Get(key []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	if logRecord.Type != data.LogRecordDeleted {
+	if logRecord.Type == data.LogRecordDeleted {
 		return nil, ErrDataFileNotFound
 	}
 	return logRecord.Value, nil
