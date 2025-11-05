@@ -119,6 +119,42 @@ func (db *DB) Get(key []byte) ([]byte, error) {
 		return nil, ErrKeyNotFound
 	}
 
+	// 从数据文件获取 value
+	return db.getValueByPosition(logRecordPos)
+}
+
+// ListKeys 获取数据库中所有 key
+func (db *DB) ListKeys() [][]byte {
+	iterator := db.index.Iterator(false)
+	keys := make([][]byte, db.index.Size())
+	var idx int
+	for iterator.Rewind(); iterator.Valid(); iterator.Next() {
+		keys[idx] = iterator.Key()
+		idx++
+	}
+	return keys
+}
+
+// Fold 获取所有数据，并执行用户指定操作，函数返回 false 时终止
+func (db *DB) Fold(fn func(key []byte, value []byte) bool) error {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	iterator := db.index.Iterator(false)
+	for iterator.Rewind(); iterator.Valid(); iterator.Next() {
+		value, err := db.getValueByPosition(iterator.Value())
+		if err != nil {
+			return err
+		}
+		if !fn(iterator.Key(), value) {
+			break
+		}
+	}
+	return nil
+}
+
+// getValueByPosition 根据索引信息获取对应的 value
+func (db *DB) getValueByPosition(logRecordPos *data.LogRecordPos) ([]byte, error) {
 	// 根据文件 id 找到对应的数据文件
 	var dataFile *data.DataFile
 	if db.activeFile.FileId == logRecordPos.Fid {
